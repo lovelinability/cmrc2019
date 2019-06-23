@@ -37,16 +37,17 @@ from torch import nn
 from torch.nn import CrossEntropyLoss
 
 from pytorch_pretrained_bert.tokenization import whitespace_tokenize, BasicTokenizer, BertTokenizer
-from pytorch_pretrained_bert.modeling import PreTrainedBertModel,BertModel,BertConfig
+from pytorch_pretrained_bert.modeling import PreTrainedBertModel, BertModel, BertConfig
 from pytorch_pretrained_bert.optimization import BertAdam
 from pytorch_pretrained_bert.file_utils import PYTORCH_PRETRAINED_BERT_CACHE
 
-logging.basicConfig(format = '%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
-                    datefmt = '%m/%d/%Y %H:%M:%S',
-                    level = logging.INFO)
+logging.basicConfig(format='%(asctime)s - %(levelname)s - %(name)s -   %(message)s',
+                    datefmt='%m/%d/%Y %H:%M:%S',
+                    level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-#add mask in answer position
+
+# add mask in answer position
 class BertForQuestionAnswering(PreTrainedBertModel):
 
     def __init__(self, config):
@@ -55,12 +56,16 @@ class BertForQuestionAnswering(PreTrainedBertModel):
         self.qa_outputs = nn.Linear(config.hidden_size, 1)
         self.apply(self.init_bert_weights)
 
-    def forward(self, input_ids, token_type_ids=None, attention_mask=None, answer_mask=None,positions=None):
+    def forward(self, input_ids, token_type_ids=None, attention_mask=None, answer_mask=None, positions=None):
         sequence_output, _ = self.bert(input_ids, token_type_ids, attention_mask, output_all_encoded_layers=False)
+        # 1 * max_seq_length, 其中对应答案的部分为 1
         answer_mask = answer_mask.to(dtype=next(self.parameters()).dtype)
+        # 去掉最后一个维度，而且当且仅当该维度为 1
+        # [batch_size, sequence_length, dim]
+        # [n, s, d] * [d, 1] = [n, s, 1] - > squeeze -> [n, s]
         logits = self.qa_outputs(sequence_output).squeeze(-1)
-        #logits = logits*answer_mask_
-        logits = logits + (1-answer_mask) * -10000.0
+        # logits = logits*answer_mask_
+        logits = logits + (1 - answer_mask) * -10000.0
 
         if positions is not None:
             # If we are on multi-GPU, split add a dimension
@@ -109,23 +114,23 @@ class SquadExample(object):
 def read_squad_examples(input_data, is_training):
     """Read a SQuAD json file into a list of SquadExample."""
     # with open(input_file, "r", encoding='utf-8') as reader:
-    replace_list=[
-        ['[BLANK1]','[unused1]'],
-       ['[BLANK2]','[unused2]'],
-       ['[BLANK3]','[unused3]'],
-       ['[BLANK4]','[unused4]'],
-       ['[BLANK5]','[unused5]'],
-       ['[BLANK6]','[unused6]'],
-       ['[BLANK7]','[unused7]'],
-       ['[BLANK8]','[unused8]'],
-       ['[BLANK9]','[unused9]'],
-       ['[BLANK10]','[unused10]'],
-       ['[BLANK11]','[unused11]'],
-       ['[BLANK12]','[unused12]'],
-       ['[BLANK13]','[unused13]'],
-       ['[BLANK14]','[unused14]'],
-       ['[BLANK15]','[unused15]'],
-       ]
+    replace_list = [
+        ['[BLANK1]', '[unused1]'],
+        ['[BLANK2]', '[unused2]'],
+        ['[BLANK3]', '[unused3]'],
+        ['[BLANK4]', '[unused4]'],
+        ['[BLANK5]', '[unused5]'],
+        ['[BLANK6]', '[unused6]'],
+        ['[BLANK7]', '[unused7]'],
+        ['[BLANK8]', '[unused8]'],
+        ['[BLANK9]', '[unused9]'],
+        ['[BLANK10]', '[unused10]'],
+        ['[BLANK11]', '[unused11]'],
+        ['[BLANK12]', '[unused12]'],
+        ['[BLANK13]', '[unused13]'],
+        ['[BLANK14]', '[unused14]'],
+        ['[BLANK15]', '[unused15]'],
+    ]
 
     def is_whitespace(c):
         if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
@@ -135,27 +140,31 @@ def read_squad_examples(input_data, is_training):
     examples = []
     for entry in input_data['data']:
         # for paragraph in entry["paragraphs"]:
-        paragraph=entry
-        context_index=entry["context_id"]
+        paragraph = entry
+        context_index = entry["context_id"]
         paragraph_text = paragraph["context"]
-        for key,value in replace_list:
-            paragraph_text=paragraph_text.replace(key,value,1)
-        tmp_text=""
-        is_blank=False
+        for key, value in replace_list:
+            paragraph_text = paragraph_text.replace(key, value, 1)
+        tmp_text = ""
+        is_blank = False
         for word_index in range(len(paragraph_text)):
-            word=paragraph_text[word_index]
-            if  paragraph_text[word_index:word_index+7]=="[unused":
-                is_blank=True
-            if word.strip() ==']':
-                is_blank=False
+            word = paragraph_text[word_index]
+            # 将[unused + num]处理成一个token
+            if paragraph_text[word_index:word_index + 7] == "[unused":
+                is_blank = True
+            if word.strip() == ']':
+                is_blank = False
             if is_blank is False:
-                tmp_text+=word.strip()+" "
+                # 分词会在词后面加空格，这里是按字分词
+                # 按英文的方法每个字后加一个空格
+                tmp_text += word.strip() + " "
             else:
-                tmp_text+=word.strip()
-        paragraph_text=tmp_text.strip()
+                tmp_text += word.strip()
+        paragraph_text = tmp_text.strip()
         doc_tokens = []
         char_to_word_offset = []
         prev_is_whitespace = True
+        # 将每一个字放入token数组中
         for c in paragraph_text:
             if is_whitespace(c):
                 prev_is_whitespace = True
@@ -167,9 +176,9 @@ def read_squad_examples(input_data, is_training):
                 prev_is_whitespace = False
             char_to_word_offset.append(len(doc_tokens) - 1)
         if is_training:
-            choices=paragraph["choices"]
-            for answer_index,choice_num in enumerate(paragraph["answers"]):
-                answer_text="[unused{}]".format(str((answer_index)+1))
+            choices = paragraph["choices"]
+            for answer_index, choice_num in enumerate(paragraph["answers"]):
+                answer_text = "[unused{}]".format(str((answer_index) + 1))
                 # tmp_answer_text=''
                 # for word in answer_text:
                 #     tmp_answer_text+=word+" "
@@ -178,6 +187,7 @@ def read_squad_examples(input_data, is_training):
                 question_text = choices[choice_num]
                 answer_offset = paragraph_text.find(orig_answer_text)
                 answer_length = len(orig_answer_text)
+                # 这里似乎把[unused]看成答案
                 start_position = char_to_word_offset[answer_offset]
                 end_position = char_to_word_offset[answer_offset + answer_length - 1]
                 # Only add answers where the text can be exactly recovered from the
@@ -191,14 +201,14 @@ def read_squad_examples(input_data, is_training):
                     whitespace_tokenize(orig_answer_text))
                 if actual_text.find(cleaned_answer_text) == -1:
                     logger.warning("Could not find answer: '%s' vs. '%s'",
-                                       actual_text, cleaned_answer_text)
+                                   actual_text, cleaned_answer_text)
                     logger.info("context: {}".format(doc_tokens))
                     logger.info("context: {}".format(paragraph_text))
                     logger.info("chooses: {}".format(choices))
                     continue
 
                 example = SquadExample(
-                    qas_id=str(context_index)+"###"+str(answer_index),
+                    qas_id=str(context_index) + "###" + str(answer_index),
                     question_text=question_text,
                     doc_tokens=doc_tokens,
                     orig_answer_text=orig_answer_text,
@@ -206,8 +216,8 @@ def read_squad_examples(input_data, is_training):
                 examples.append(example)
         else:
 
-            answer_index=paragraph['answers']
-            for choice_index,choice in enumerate(paragraph["choices"]):
+            answer_index = paragraph['answers']
+            for choice_index, choice in enumerate(paragraph["choices"]):
                 question_text = choice
                 orig_answer_text = None
                 position = None
@@ -218,17 +228,14 @@ def read_squad_examples(input_data, is_training):
                 # Note that this means for training mode, every example is NOT
                 # guaranteed to be preserved.
 
-
                 example = SquadExample(
-                    qas_id=str(context_index)+"###"+str(choice_index),
+                    qas_id=str(context_index) + "###" + str(choice_index),
                     question_text=question_text,
                     doc_tokens=doc_tokens,
                     orig_answer_text=answer_index,
                     position=position)
                 examples.append(example)
     return examples
-
-
 
 
 class InputFeatures(object):
@@ -255,9 +262,8 @@ class InputFeatures(object):
         self.input_ids = input_ids
         self.input_mask = input_mask
         self.segment_ids = segment_ids
-        self.answer_position_mask=answer_position_mask
+        self.answer_position_mask = answer_position_mask
         self.position = position
-
 
 
 def convert_examples_to_features(examples, tokenizer, max_seq_length,
@@ -269,17 +275,19 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
     features = []
     for (example_index, example) in enumerate(examples):
         query_tokens = tokenizer.tokenize(example.question_text)
-
+        # 截断问题词数
         if len(query_tokens) > max_query_length:
             query_tokens = query_tokens[0:max_query_length]
 
+        # 原句子中词位置与分词后词位置的映射
         tok_to_orig_index = []
         orig_to_tok_index = []
         all_doc_tokens = []
+        # 将类似（1895-1995）进行分词
         for (i, token) in enumerate(example.doc_tokens):
             orig_to_tok_index.append(len(all_doc_tokens))
-            if token.find("unused")>-1:#  not Part-of-speech of [unused1-15]
-                sub_tokens=[str(token)]
+            if token.find("unused") > -1:  # not Part-of-speech of [unused1-15]
+                sub_tokens = [str(token)]
             else:
                 sub_tokens = tokenizer.tokenize(token)
             for sub_token in sub_tokens:
@@ -289,7 +297,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
         tok_position = None
         if is_training:
             tok_position = orig_to_tok_index[example.position]
-            #tok_position, _ = _improve_answer_span(
+            # tok_position, _ = _improve_answer_span(
             #    all_doc_tokens, tok_position, tok_position, tokenizer,
             #    example.orig_answer_text)
 
@@ -310,6 +318,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             doc_spans.append(_DocSpan(start=start_offset, length=length))
             if start_offset + length == len(all_doc_tokens):
                 break
+            # 每次位移一个doc_stride，长度为length的文本来作为一个doc_span
             start_offset += min(length, doc_stride)
 
         for (doc_span_index, doc_span) in enumerate(doc_spans):
@@ -327,8 +336,9 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
             for i in range(doc_span.length):
                 split_token_index = doc_span.start + i
+                # 映射到原文本中的单词位置
                 token_to_orig_map[len(tokens)] = tok_to_orig_index[split_token_index]
-
+                # 一个词会包含在多个doc_span中，因此选取序号最大的文本
                 is_max_context = _check_is_max_context(doc_spans, doc_span_index,
                                                        split_token_index)
                 token_is_max_context[len(tokens)] = is_max_context
@@ -336,13 +346,12 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                 segment_ids.append(1)
             tokens.append("[SEP]")
             segment_ids.append(1)
-            answer_position_mask=[0]*max_seq_length
-            for word_index in range(len(tokens)): # blank mask
-                word=tokens[word_index]
-                if word.find("unused")>-1 :
-                    answer_position_mask[word_index]=1
-
-
+            # mask为一个文本最大长度，mask的词为[unused]
+            answer_position_mask = [0] * max_seq_length
+            for word_index in range(len(tokens)):  # blank mask
+                word = tokens[word_index]
+                if word.find("unused") > -1:
+                    answer_position_mask[word_index] = 1
 
             input_ids = tokenizer.convert_tokens_to_ids(tokens)
 
@@ -359,14 +368,16 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
             assert len(input_ids) == max_seq_length
             assert len(input_mask) == max_seq_length
             assert len(segment_ids) == max_seq_length
-            assert len(answer_position_mask)==max_seq_length
+            assert len(answer_position_mask) == max_seq_length
 
             position = None
             if is_training:
                 # For training, if our document chunk does not contain an annotation
                 # we throw it out, since there is nothing to predict.
+                # 这里已经丢弃了拒绝样本
                 doc_start = doc_span.start
                 doc_end = doc_span.start + doc_span.length - 1
+                # 不包含答案的chunk直接丢弃
                 if (example.position < doc_start or example.position > doc_end):
                     continue
 
@@ -401,7 +412,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
                     unique_id=unique_id,
                     example_index=example_index,
                     doc_span_index=doc_span_index,
-                    tokens=tokens,
+                    tokens=tokens,  # 一个doc_span对应的词汇表
                     token_to_orig_map=token_to_orig_map,
                     token_is_max_context=token_is_max_context,
                     input_ids=input_ids,
@@ -488,7 +499,6 @@ def _check_is_max_context(doc_spans, cur_span_index, position):
     return cur_span_index == best_span_index
 
 
-
 RawResult = collections.namedtuple("RawResult",
                                    ["unique_id", "logits"])
 
@@ -520,21 +530,21 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
         prelim_predictions = []
         for (feature_index, feature) in enumerate(features):
             result = unique_id_to_result[feature.unique_id]
-
+            # 这里的logits似乎是注意力分数
             indexes = _get_best_indexes(result.logits, n_best_size)
             for index in indexes:
-                    if index >= len(feature.tokens):
-                        continue
-                    if index not in feature.token_to_orig_map:
-                        continue
-                    if not feature.token_is_max_context.get(index, False):
-                        continue
-                    length = 1
-                    prelim_predictions.append(
-                        _PrelimPrediction(
-                            feature_index=feature_index,
-                            index=index,
-                            logit=result.logits[index]))
+                if index >= len(feature.tokens):
+                    continue
+                if index not in feature.token_to_orig_map:
+                    continue
+                if not feature.token_is_max_context.get(index, False):
+                    continue
+                length = 1
+                prelim_predictions.append(
+                    _PrelimPrediction(
+                        feature_index=feature_index,
+                        index=index,
+                        logit=result.logits[index]))
 
         prelim_predictions = sorted(
             prelim_predictions,
@@ -551,12 +561,14 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
                 break
             feature = features[pred.feature_index]
 
+            # 为什么仅加 1 ,因为原文中的答案就只有一个词
             tok_tokens = feature.tokens[pred.index:(pred.index + 1)]
             orig_doc = feature.token_to_orig_map[pred.index]
             orig_tokens = example.doc_tokens[orig_doc:(orig_doc + 1)]
             tok_text = " ".join(tok_tokens)
 
             # De-tokenize WordPieces that have been split off.
+            # 这段代码可能是应用于原始的情况(输出为一段句子)
             tok_text = tok_text.replace(" ##", "")
             tok_text = tok_text.replace("##", "")
 
@@ -564,7 +576,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
             tok_text = tok_text.strip()
             tok_text = " ".join(tok_text.split())
             orig_text = " ".join(orig_tokens)
-
+            # 这里将预测出来的特征映射到文字，在这里为中文
             final_text = get_final_text(tok_text, orig_text, do_lower_case, verbose_logging)
             if final_text in seen_predictions:
                 continue
@@ -587,6 +599,7 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
         for entry in nbest:
             total_scores.append(entry.logit)
 
+        # logits经过softmax计算为total_score
         probs = _compute_softmax(total_scores)
 
         nbest_json = []
@@ -599,7 +612,8 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
 
         assert len(nbest_json) >= 1
 
-        all_predictions[example.qas_id] = [[tmp["text"] for tmp in nbest_json],[tmp['probability'] for tmp in nbest_json]]
+        all_predictions[example.qas_id] = [[tmp["text"] for tmp in nbest_json],
+                                           [tmp['probability'] for tmp in nbest_json]]
         all_nbest_json[example.qas_id] = nbest_json
 
     # with open(output_prediction_file, "w") as writer:
@@ -607,80 +621,83 @@ def write_predictions(all_examples, all_features, all_results, n_best_size,
     #
     # with open(output_nbest_file, "w") as writer:
     #     writer.write(json.dumps(all_nbest_json, indent=4) + "\n")
-    all_examples_dict=dict()
+    all_examples_dict = dict()
     for example in all_examples:
-        all_examples_dict[example.qas_id]=example
-    right_num=0
-    all_num=0
-    all_num1=0
-    all_context_dict=dict()
-    for key ,value in all_predictions.items():
-        context_id,answer_id=key.split("###")
-        example=all_examples_dict[key]
+        all_examples_dict[example.qas_id] = example
+    right_num = 0
+    all_num = 0
+    all_num1 = 0
+    all_context_dict = dict()
+    for key, value in all_predictions.items():
+        # 这里的key为上文的qas_id
+        # 这里的answer_id为原文中答案的位置信息
+        # value为可能的答案和相应的概率
+        context_id, answer_id = key.split("###")
+        example = all_examples_dict[key]
         if context_id in all_context_dict:
-            all_context_dict[context_id].append([example,answer_id,value])
+            all_context_dict[context_id].append([example, answer_id, value])
         else:
-            all_context_dict[context_id]=[[example,answer_id,value]]
-    out_put_predict=dict()
-    for key , value in all_context_dict.items():
-        final_id=key
-        answer_position_num=0
-        answer_id_to_position_dict=dict()
-        answer_position_to_id=None
-        answer_id_to_predict_val=dict()
-        for example,answer_id, val in value:
-            if answer_position_num==0:
-                answer_position_num=len(example.orig_answer_text)
-            elif answer_position_num !=len(example.orig_answer_text):
+            all_context_dict[context_id] = [[example, answer_id, value]]
+    out_put_predict = dict()
+    for key, value in all_context_dict.items():
+        final_id = key
+        answer_position_num = 0
+        answer_id_to_position_dict = dict()
+        answer_position_to_id = None
+        answer_id_to_predict_val = dict()
+        for example, answer_id, val in value:
+            if answer_position_num == 0:
+                answer_position_num = len(example.orig_answer_text)
+            elif answer_position_num != len(example.orig_answer_text):
                 logger.info("error")
-            answer_position_to_id=example.orig_answer_text
-            answer_id_to_predict_val[answer_id]=val
-        answer_text_dict=dict()
-        while True:# search best answer for every choices
-            is_update=False
-            for key ,value in answer_id_to_predict_val.items():
-                if len(value[0])==0:
+            answer_position_to_id = example.orig_answer_text
+            answer_id_to_predict_val[answer_id] = val
+        answer_text_dict = dict()
+        while True:  # search best answer for every choices
+            # 这里一个答案对应多个问题，这里是选择概率最大的空格填充
+            is_update = False
+            for key, value in answer_id_to_predict_val.items():
+                if len(value[0]) == 0:
                     continue
-                best_answer_text=value[0][0]
-                best_answer_score=value[1][0]
+                best_answer_text = value[0][0]
+                best_answer_score = value[1][0]
                 if best_answer_text in answer_text_dict:
-                    answer_text_score_id=answer_text_dict[best_answer_text]
-                    if best_answer_score >answer_text_score_id[0]:
-                        tmp_value=answer_id_to_predict_val[answer_text_score_id[1]]
-                        tmp_value[0]=tmp_value[0][1:]
-                        tmp_value[1]=tmp_value[1][1:]
-                        answer_id_to_predict_val[answer_text_score_id[1]]=tmp_value
-                        answer_text_dict[best_answer_text]=[best_answer_score,key]
-                        is_update=True
+                    answer_text_score_id = answer_text_dict[best_answer_text]
+                    if best_answer_score > answer_text_score_id[0]:
+                        tmp_value = answer_id_to_predict_val[answer_text_score_id[1]]
+                        # 删除一个备选项，之前分数低的答案被丢弃
+                        tmp_value[0] = tmp_value[0][1:]
+                        tmp_value[1] = tmp_value[1][1:]
+                        answer_id_to_predict_val[answer_text_score_id[1]] = tmp_value
+                        answer_text_dict[best_answer_text] = [best_answer_score, key]
+                        is_update = True
                     elif answer_text_score_id[1] != key:
-                        tmp_value=answer_id_to_predict_val[key]
-                        tmp_value[0]=tmp_value[0][1:]
-                        tmp_value[1]=tmp_value[1][1:]
-                        answer_id_to_predict_val[key]=tmp_value
-                        is_update=True
+                        # 删除当前key下的备选答案
+                        tmp_value = answer_id_to_predict_val[key]
+                        tmp_value[0] = tmp_value[0][1:]
+                        tmp_value[1] = tmp_value[1][1:]
+                        answer_id_to_predict_val[key] = tmp_value
+                        is_update = True
                 else:
-                    answer_text_dict[best_answer_text]=[best_answer_score,key]
-                    is_update=True
-            if is_update==False:
+                    answer_text_dict[best_answer_text] = [best_answer_score, key]
+                    is_update = True
+            if is_update == False:
                 break
 
         # logger.info("predict: {}".format(answer_id_to_predict_val))
-        out_put_predict[final_id]=[-1]*len(answer_position_to_id)
-        for key ,value_1 in answer_id_to_predict_val.items(): #get final predict file
-            if len(value_1)>0 and len(value_1[0])>0:
-                answer_pos=value_1[0][0]
-                answer_pos=answer_pos.replace("[unused","")
-                answer_pos=answer_pos.replace("]","")
+        out_put_predict[final_id] = [-1] * len(answer_position_to_id)
+        for key, value_1 in answer_id_to_predict_val.items():  # get final predict file
+            if len(value_1) > 0 and len(value_1[0]) > 0:
+                answer_pos = value_1[0][0]
+                answer_pos = answer_pos.replace("[unused", "")
+                answer_pos = answer_pos.replace("]", "")
                 try:
-                    answer_pos=int(answer_pos)
-                    out_put_predict[final_id][answer_pos-1]=int(key)
+                    answer_pos = int(answer_pos)
+                    out_put_predict[final_id][answer_pos - 1] = int(key)
                 except Exception as e:
                     continue
 
-    json.dump(out_put_predict,open(output_prediction_file,mode="w"), indent=3)
-
-
-
+    json.dump(out_put_predict, open(output_prediction_file, mode="w"), indent=3)
 
 
 def get_final_text(pred_text, orig_text, do_lower_case, verbose_logging=False):
@@ -744,7 +761,7 @@ def get_final_text(pred_text, orig_text, do_lower_case, verbose_logging=False):
     if len(orig_ns_text) != len(tok_ns_text):
         if verbose_logging:
             logger.info("Length not equal after stripping spaces: '%s' vs '%s'",
-                            orig_ns_text, tok_ns_text)
+                        orig_ns_text, tok_ns_text)
         return orig_text
 
     # We then project the characters in `pred_text` back to `orig_text` using
@@ -813,10 +830,12 @@ def _compute_softmax(scores):
         probs.append(score / total_sum)
     return probs
 
+
 def warmup_linear(x, warmup=0.002):
     if x < warmup:
-        return x/warmup
+        return x / warmup
     return 1.0 - x
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -909,7 +928,7 @@ def main():
 
     if args.gradient_accumulation_steps < 1:
         raise ValueError("Invalid gradient_accumulation_steps parameter: {}, should be >= 1".format(
-                            args.gradient_accumulation_steps))
+            args.gradient_accumulation_steps))
 
     args.train_batch_size = int(args.train_batch_size / args.gradient_accumulation_steps)
 
@@ -931,11 +950,11 @@ def main():
             raise ValueError(
                 "If `do_predict` is True, then `predict_file` must be specified.")
 
-    if os.path.exists(args.output_dir)==False:
+    if os.path.exists(args.output_dir) == False:
         # raise ValueError("Output directory () already exists and is not empty.")
         os.makedirs(args.output_dir, exist_ok=True)
-    raw_test_data=json.load(open(args.predict_file,mode='r'))
-    raw_train_data=json.load(open(args.train_file,mode='r'))
+    raw_test_data = json.load(open(args.predict_file, mode='r'))
+    raw_train_data = json.load(open(args.train_file, mode='r'))
 
     import pickle as cPickle
     train_examples = None
@@ -943,10 +962,10 @@ def main():
     if args.do_train:
 
         if os.path.exists("train_file_baseline.pkl") and False:
-            train_examples=cPickle.load(open("train_file_baseline.pkl",mode='rb'))
+            train_examples = cPickle.load(open("train_file_baseline.pkl", mode='rb'))
         else:
-            train_examples = read_squad_examples(raw_train_data, is_training = True)
-            cPickle.dump(train_examples,open("train_file_baseline.pkl",mode='wb'))
+            train_examples = read_squad_examples(raw_train_data, is_training=True)
+            cPickle.dump(train_examples, open("train_file_baseline.pkl", mode='wb'))
         logger.info("train examples {}".format(len(train_examples)))
         num_train_steps = int(
             len(train_examples) / args.train_batch_size / args.gradient_accumulation_steps * args.num_train_epochs)
@@ -954,10 +973,10 @@ def main():
     # Prepare model
     bert_config = BertConfig.from_json_file(args.bert_config_file)
     tokenizer = BertTokenizer(vocab_file=args.vocab_file, do_lower_case=args.do_lower_case)
-    model =BertForQuestionAnswering(bert_config)
+    model = BertForQuestionAnswering(bert_config)
     if args.init_checkpoint is not None:
         logger.info('load bert weight')
-        state_dict=torch.load(args.init_checkpoint, map_location='cpu')
+        state_dict = torch.load(args.init_checkpoint, map_location='cpu')
         missing_keys = []
         unexpected_keys = []
         error_msgs = []
@@ -970,6 +989,7 @@ def main():
         # state_dict=new_state_dict
         if metadata is not None:
             state_dict._metadata = metadata
+
         def load(module, prefix=''):
             local_metadata = {} if metadata is None else metadata.get(prefix[:-1], {})
 
@@ -979,6 +999,7 @@ def main():
                 # logger.info("name {} chile {}".format(name,child))
                 if child is not None:
                     load(child, prefix + name + '.')
+
         load(model, prefix='' if hasattr(model, 'bert') else 'bert.')
         logger.info("missing keys:{}".format(missing_keys))
         logger.info('unexpected keys:{}'.format(unexpected_keys))
@@ -990,13 +1011,15 @@ def main():
         try:
             from apex.parallel import DistributedDataParallel as DDP
         except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
 
         model = DDP(model)
     elif n_gpu > 1:
         model = torch.nn.DataParallel(model)
 
     # Prepare optimizer
+    # 在这里引入优化器
     param_optimizer = list(model.named_parameters())
 
     # hack to remove pooler, which is not used
@@ -1007,7 +1030,7 @@ def main():
     optimizer_grouped_parameters = [
         {'params': [p for n, p in param_optimizer if not any(nd in n for nd in no_decay)], 'weight_decay': 0.01},
         {'params': [p for n, p in param_optimizer if any(nd in n for nd in no_decay)], 'weight_decay': 0.0}
-        ]
+    ]
 
     t_total = num_train_steps
     if args.local_rank != -1:
@@ -1017,7 +1040,8 @@ def main():
             from apex.optimizers import FP16_Optimizer
             from apex.optimizers import FusedAdam
         except ImportError:
-            raise ImportError("Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
+            raise ImportError(
+                "Please install apex from https://www.github.com/nvidia/apex to use distributed and fp16 training.")
 
         optimizer = FusedAdam(optimizer_grouped_parameters,
                               lr=args.learning_rate,
@@ -1035,7 +1059,9 @@ def main():
 
     global_step = 0
     if args.do_train:
-        cached_train_features_file = args.train_file+'_{0}_{1}_{2}_v{3}'.format(str(args.max_seq_length), str(args.doc_stride), str(args.max_query_length),str(1))
+        cached_train_features_file = args.train_file + '_{0}_{1}_{2}_v{3}'.format(str(args.max_seq_length),
+                                                                                  str(args.doc_stride),
+                                                                                  str(args.max_query_length), str(1))
         train_features = None
         try:
             with open(cached_train_features_file, "rb") as reader:
@@ -1061,27 +1087,29 @@ def main():
         all_input_ids = torch.tensor([f.input_ids for f in train_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in train_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in train_features], dtype=torch.long)
-        all_answer_pos= torch.tensor([f.answer_position_mask for f in  train_features],dtype=torch.long)
+        all_answer_pos = torch.tensor([f.answer_position_mask for f in train_features], dtype=torch.long)
         all_positions = torch.tensor([f.position for f in train_features], dtype=torch.long)
-        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,all_answer_pos,
+        train_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_answer_pos,
                                    all_positions)
         if args.local_rank == -1:
             train_sampler = RandomSampler(train_data)
         else:
             train_sampler = DistributedSampler(train_data)
-        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size, drop_last=True)
+        train_dataloader = DataLoader(train_data, sampler=train_sampler, batch_size=args.train_batch_size,
+                                      drop_last=True)
 
         model.train()
         for _ in trange(int(args.num_train_epochs), desc="Epoch"):
             model.zero_grad()
-            epoch_itorator=tqdm(train_dataloader,disable=None)
+            epoch_itorator = tqdm(train_dataloader, disable=None)
             for step, batch in enumerate(epoch_itorator):
                 if n_gpu == 1:
-                    batch = tuple(t.to(device) for t in batch) # multi-gpu does scattering it-self
-                input_ids, input_mask, segment_ids, answer_pos,positions = batch
-                loss = model(input_ids, segment_ids, input_mask,answer_pos, positions)
+                    batch = tuple(t.to(device) for t in batch)  # multi-gpu does scattering it-self
+                # 这句语法似乎不好理解
+                input_ids, input_mask, segment_ids, answer_pos, positions = batch
+                loss = model(input_ids, segment_ids, input_mask, answer_pos, positions)
                 if n_gpu > 1:
-                    loss = loss.mean() # mean() to average on multi-gpu.
+                    loss = loss.mean()  # mean() to average on multi-gpu.
                 if args.gradient_accumulation_steps > 1:
                     loss = loss / args.gradient_accumulation_steps
                 if args.fp16:
@@ -1090,15 +1118,15 @@ def main():
                     loss.backward()
                 if (step + 1) % args.gradient_accumulation_steps == 0:
                     # modify learning rate with special warm up BERT uses
-                    lr_this_step = args.learning_rate * warmup_linear(global_step/t_total, args.warmup_proportion)
+                    lr_this_step = args.learning_rate * warmup_linear(global_step / t_total, args.warmup_proportion)
                     for param_group in optimizer.param_groups:
                         param_group['lr'] = lr_this_step
                     optimizer.step()
                     optimizer.zero_grad()
                     global_step += 1
 
-                if (step+1) % 50 == 0:
-                    logger.info("loss@{}:{}".format(step,loss.cpu().item()))
+                if (step + 1) % 50 == 0:
+                    logger.info("loss@{}:{}".format(step, loss.cpu().item()))
 
     # Save a trained model
     output_model_file = os.path.join(args.output_dir, "pytorch_model.bin")
@@ -1108,7 +1136,7 @@ def main():
 
     # Load a trained model that you have fine-tuned
     model_state_dict = torch.load(output_model_file)
-    model =BertForQuestionAnswering(bert_config)
+    model = BertForQuestionAnswering(bert_config)
     model.load_state_dict(model_state_dict)
     model.to(device)
     if n_gpu > 1:
@@ -1134,9 +1162,9 @@ def main():
         all_input_ids = torch.tensor([f.input_ids for f in eval_features], dtype=torch.long)
         all_input_mask = torch.tensor([f.input_mask for f in eval_features], dtype=torch.long)
         all_segment_ids = torch.tensor([f.segment_ids for f in eval_features], dtype=torch.long)
-        all_answer_pos= torch.tensor([f.answer_position_mask for f in  eval_features],dtype=torch.long)
+        all_answer_pos = torch.tensor([f.answer_position_mask for f in eval_features], dtype=torch.long)
         all_example_index = torch.arange(all_input_ids.size(0), dtype=torch.long)
-        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids,all_answer_pos, all_example_index)
+        eval_data = TensorDataset(all_input_ids, all_input_mask, all_segment_ids, all_answer_pos, all_example_index)
         # Run prediction for full data
         eval_sampler = SequentialSampler(eval_data)
         eval_dataloader = DataLoader(eval_data, sampler=eval_sampler, batch_size=args.predict_batch_size)
@@ -1144,15 +1172,17 @@ def main():
         model.eval()
         all_results = []
         logger.info("Start evaluating")
-        for input_ids, input_mask, segment_ids,answer_pos, example_indices in tqdm(eval_dataloader, desc="Evaluating",disable=None):
+        for input_ids, input_mask, segment_ids, answer_pos, example_indices in tqdm(eval_dataloader, desc="Evaluating",
+                                                                                    disable=None):
             if len(all_results) % 1000 == 0:
                 logger.info("Processing example: %d" % (len(all_results)))
             input_ids = input_ids.to(device)
+            # input_mask :
             input_mask = input_mask.to(device)
             segment_ids = segment_ids.to(device)
-            answer_pos=answer_pos.to(device)
+            answer_pos = answer_pos.to(device)
             with torch.no_grad():
-                batch_logits = model(input_ids, segment_ids, input_mask,answer_pos)
+                batch_logits = model(input_ids, segment_ids, input_mask, answer_pos)
             for i, example_index in enumerate(example_indices):
                 logits = batch_logits[i].detach().cpu().tolist()
                 eval_feature = eval_features[example_index.item()]

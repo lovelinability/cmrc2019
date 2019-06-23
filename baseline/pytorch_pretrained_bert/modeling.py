@@ -59,7 +59,7 @@ def gelu(x):
 def swish(x):
     return x * torch.sigmoid(x)
 
-
+# 激活函数
 ACT2FN = {"gelu": gelu, "relu": torch.nn.functional.relu, "swish": swish}
 
 
@@ -154,7 +154,9 @@ try:
     from apex.normalization.fused_layer_norm import FusedLayerNorm as BertLayerNorm
 except ImportError:
     print("Better speed can be achieved with apex installed from https://www.github.com/nvidia/apex.")
+
     class BertLayerNorm(nn.Module):
+
         def __init__(self, hidden_size, eps=1e-12):
             """Construct a layernorm module in the TF style (epsilon inside the square root).
             """
@@ -170,10 +172,13 @@ except ImportError:
             return self.weight * x + self.bias
 
 class BertEmbeddings(nn.Module):
+
     """Construct the embeddings from word, position and token_type embeddings.
     """
+
     def __init__(self, config):
         super(BertEmbeddings, self).__init__()
+        # 共有vocab_size个embedding可供查询，每个embedding的长度为hidden_size
         self.word_embeddings = nn.Embedding(config.vocab_size, config.hidden_size)
         self.position_embeddings = nn.Embedding(config.max_position_embeddings, config.hidden_size)
         self.token_type_embeddings = nn.Embedding(config.type_vocab_size, config.hidden_size)
@@ -194,6 +199,7 @@ class BertEmbeddings(nn.Module):
         position_embeddings = self.position_embeddings(position_ids)
         token_type_embeddings = self.token_type_embeddings(token_type_ids)
 
+        # embedding的过程将这三个embedding的结果加起来
         embeddings = words_embeddings + position_embeddings + token_type_embeddings
         embeddings = self.LayerNorm(embeddings)
         embeddings = self.dropout(embeddings)
@@ -211,6 +217,9 @@ class BertSelfAttention(nn.Module):
         self.attention_head_size = int(config.hidden_size / config.num_attention_heads)
         self.all_head_size = self.num_attention_heads * self.attention_head_size
 
+        # 这里构造了几个线性函数，每一个参量都代表一个函数
+        # all_head_size = num_heads * head_size
+        # 一次性先求出所有的注意力参数
         self.query = nn.Linear(config.hidden_size, self.all_head_size)
         self.key = nn.Linear(config.hidden_size, self.all_head_size)
         self.value = nn.Linear(config.hidden_size, self.all_head_size)
@@ -218,11 +227,21 @@ class BertSelfAttention(nn.Module):
         self.dropout = nn.Dropout(config.attention_probs_dropout_prob)
 
     def transpose_for_scores(self, x):
+        # x.size() (3, 2, 4)
+        # x.size()[:-1] (3, 2)
+        # x.size()[:-1] + (2, 3) (3, 2, 3, 2)
+        # x维度为三维：[num_sentences, num_words, all_head_size]
         new_x_shape = x.size()[:-1] + (self.num_attention_heads, self.attention_head_size)
+        # 转换维度，但是必须保证元素数量相同
         x = x.view(*new_x_shape)
+        # 将维度进行调换
+        # 后两位为每个词和对应的注意力值，
+        # 注意力机制是要求解不同词之间的词的注意力乘积
         return x.permute(0, 2, 1, 3)
 
     def forward(self, hidden_states, attention_mask):
+        # 将输入输入线性层，得到输出结果
+        # 维度应该为三维 （num_sentences, num_words, hidden_size）
         mixed_query_layer = self.query(hidden_states)
         mixed_key_layer = self.key(hidden_states)
         mixed_value_layer = self.value(hidden_states)
@@ -232,18 +251,22 @@ class BertSelfAttention(nn.Module):
         value_layer = self.transpose_for_scores(mixed_value_layer)
 
         # Take the dot product between "query" and "key" to get the raw attention scores.
+        # attention = Q * K ^ T
+        # (5, 6, 3, 4) * (5, 6, 4, 3) = (5, 6, 3, 3)
         attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2))
         attention_scores = attention_scores / math.sqrt(self.attention_head_size)
         # Apply the attention mask is (precomputed for all layers in BertModel forward() function)
         attention_scores = attention_scores + attention_mask
 
         # Normalize the attention scores to probabilities.
+        # 倒数第一个维度做softmax，（3， 4） 4这个维度做softmax
         attention_probs = nn.Softmax(dim=-1)(attention_scores)
 
         # This is actually dropping out entire tokens to attend to, which might
         # seem a bit unusual, but is taken from the original Transformer paper.
         attention_probs = self.dropout(attention_probs)
 
+        # 最终context_layer与之前的query_layer shape一样
         context_layer = torch.matmul(attention_probs, value_layer)
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + (self.all_head_size,)
@@ -254,6 +277,7 @@ class BertSelfAttention(nn.Module):
 class BertSelfOutput(nn.Module):
     def __init__(self, config):
         super(BertSelfOutput, self).__init__()
+        # 外接一个dense，一个linear表示一个最简单的前馈网络，输入与输出维度一致
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
@@ -261,6 +285,7 @@ class BertSelfOutput(nn.Module):
     def forward(self, hidden_states, input_tensor):
         hidden_states = self.dense(hidden_states)
         hidden_states = self.dropout(hidden_states)
+        # 这里为什么加上input_tensor
         hidden_states = self.LayerNorm(hidden_states + input_tensor)
         return hidden_states
 
@@ -289,11 +314,12 @@ class BertIntermediate(nn.Module):
         hidden_states = self.intermediate_act_fn(hidden_states)
         return hidden_states
 
-
+# 残差连接
 class BertOutput(nn.Module):
     def __init__(self, config):
         super(BertOutput, self).__init__()
         self.dense = nn.Linear(config.intermediate_size, config.hidden_size)
+        # 这里的 eps 可能是防止方差为 0
         self.LayerNorm = BertLayerNorm(config.hidden_size, eps=1e-12)
         self.dropout = nn.Dropout(config.hidden_dropout_prob)
 
@@ -325,6 +351,8 @@ class BertEncoder(nn.Module):
         self.layer = nn.ModuleList([copy.deepcopy(layer) for _ in range(config.num_hidden_layers)])
 
     def forward(self, hidden_states, attention_mask, output_all_encoded_layers=True):
+        # output_all_encoded_layers
+        # 是否输出所有隐藏层的输出 vs 输出最后一个隐藏层的输出
         all_encoder_layers = []
         for layer_module in self.layer:
             hidden_states = layer_module(hidden_states, attention_mask)
@@ -339,17 +367,19 @@ class BertPooler(nn.Module):
     def __init__(self, config):
         super(BertPooler, self).__init__()
         self.dense = nn.Linear(config.hidden_size, config.hidden_size)
+        # 使用tanh函数作为激活函数
         self.activation = nn.Tanh()
 
     def forward(self, hidden_states):
         # We "pool" the model by simply taking the hidden state corresponding
         # to the first token.
+        # 只池化第一个词对应的隐藏状态
         first_token_tensor = hidden_states[:, 0]
         pooled_output = self.dense(first_token_tensor)
         pooled_output = self.activation(pooled_output)
         return pooled_output
 
-
+# 这个函数似乎和上面的中间层代码相似
 class BertPredictionHeadTransform(nn.Module):
     def __init__(self, config):
         super(BertPredictionHeadTransform, self).__init__()
@@ -383,7 +413,7 @@ class BertLMPredictionHead(nn.Module):
         hidden_states = self.decoder(hidden_states) + self.bias
         return hidden_states
 
-
+# masked language model
 class BertOnlyMLMHead(nn.Module):
     def __init__(self, config, bert_model_embedding_weights):
         super(BertOnlyMLMHead, self).__init__()
@@ -393,7 +423,7 @@ class BertOnlyMLMHead(nn.Module):
         prediction_scores = self.predictions(sequence_output)
         return prediction_scores
 
-
+# next sentence predictions
 class BertOnlyNSPHead(nn.Module):
     def __init__(self, config):
         super(BertOnlyNSPHead, self).__init__()
@@ -420,6 +450,7 @@ class PreTrainedBertModel(nn.Module):
     """ An abstract class to handle weights initialization and
         a simple interface for dowloading and loading pretrained models.
     """
+    # 仅仅是下载和载入预训练模型
     def __init__(self, config, *inputs, **kwargs):
         super(PreTrainedBertModel, self).__init__()
         if not isinstance(config, BertConfig):
@@ -624,6 +655,7 @@ class BertModel(PreTrainedBertModel):
         extended_attention_mask = (1.0 - extended_attention_mask) * -10000.0
 
         embedding_output = self.embeddings(input_ids, token_type_ids)
+        # batch_size, sequence_length, dim
         encoded_layers = self.encoder(embedding_output,
                                       extended_attention_mask,
                                       output_all_encoded_layers=output_all_encoded_layers)
@@ -822,6 +854,10 @@ class BertForNextSentencePrediction(PreTrainedBertModel):
 
         if next_sentence_label is not None:
             loss_fct = CrossEntropyLoss(ignore_index=-1)
+            # 这个语法不好懂
+            # view(-1, 2)把原矩阵转换成一列,然后每两个做一行输出
+            # 假设数组维度为(3, 4, 3)
+            # a.view(-1, 2)数组维度为(12, 2)
             next_sentence_loss = loss_fct(seq_relationship_score.view(-1, 2), next_sentence_label.view(-1))
             return next_sentence_loss
         else:
