@@ -275,7 +275,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
     features = []
     for (example_index, example) in enumerate(examples):
-        objgraph.show_growth()
+        # objgraph.show_growth()
         query_tokens = tokenizer.tokenize(example.question_text)
         # 截断问题词数
         if len(query_tokens) > max_query_length:
@@ -1105,6 +1105,7 @@ def main():
             model.zero_grad()
             epoch_itorator = tqdm(train_dataloader, disable=None)
             for step, batch in enumerate(epoch_itorator):
+                objgraph.show_growth()
                 if n_gpu == 1:
                     batch = tuple(t.to(device) for t in batch)  # multi-gpu does scattering it-self
                 # 这句语法似乎不好理解
