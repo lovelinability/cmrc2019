@@ -11,7 +11,7 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
+# See the Liccense for theb specific language governing permissions and
 # limitations under the License.
 """Run BERT on SQuAD."""
 
@@ -27,6 +27,7 @@ import math
 import os
 import random
 import pickle
+import objgraph
 from tqdm import tqdm, trange
 
 import numpy as np
@@ -274,6 +275,7 @@ def convert_examples_to_features(examples, tokenizer, max_seq_length,
 
     features = []
     for (example_index, example) in enumerate(examples):
+        objgraph.show_growth()
         query_tokens = tokenizer.tokenize(example.question_text)
         # 截断问题词数
         if len(query_tokens) > max_query_length:
